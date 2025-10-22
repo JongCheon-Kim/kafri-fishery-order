@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>어촌 AI 지도챗봇 – 하이브리드 프리셋(오프라인 내장 + 서버 불러오기)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- no SRI/crossorigin for file:// testing -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+    .fallback { position: fixed; inset: 0; display:flex; align-items:center; justify-content:center; font:16px/1.4 system-ui; color:#0f172a }
+    .chatbot-container {
+      position: fixed; bottom: 20px; right: 20px; width: 400px; height: 600px;
+      background:#fff; border:1px solid #cbd5e1; border-radius:12px; display:none; flex-direction:column;
+      box-shadow: 0 10px 30px rgba(0,0,0,.15); z-index:1000; overflow:hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    .chatbot-header { background:#2563eb; color:#fff; padding:10px 14px; display:flex; align-items:center; gap:8px; font-weight:700 }
+    .chatbot-header .spacer { flex:1 }
+    .chatbot-header button { background: transparent; border:0; color:#fff; cursor:pointer }
+    .chatbot-body { padding: 10px 10px; display:flex; flex-direction:column; gap:10px; height: calc(100% - 108px) }
+    .chatlog { flex:1; border:1px solid #e2e8f0; border-radius: 8px; padding: 8px; overflow:auto; background:#f8fafc }
+    .chatlog p { margin: 6px 0; white-space: pre-wrap; }
+    .chatbot-footer { display:flex; gap:6px; padding:8px 10px }
+    .chatbot-footer input { flex:1; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px }
+    .chatbot-footer button { padding:10px 12px; border:0; border-radius:8px; background:#2563eb; color:#fff; cursor:pointer; font-weight:700 }
+    .chatbot-toggle {
+      position: fixed; bottom: 20px; right: 20px; z-index: 900;
+      background:#2563eb; color:#fff; border: none; padding: 10px 14px; border-radius: 10px; cursor: pointer; font-weight: 700;
+    }
+    dialog { border:0; border-radius:14px; width:min(720px,95vw); padding:0; overflow:hidden; }
+    dialog::backdrop { background: rgba(0,0,0,.35) }
+    .modal-head { background:#2563eb; color:#fff; padding:12px 16px; font-weight:700 }
+    .modal-body { padding:12px 16px }
+    .modal-foot { display:flex; gap:8px; justify-content:flex-end; padding:12px 16px; border-top:1px solid #e2e8f0 }
+    textarea.mono { width:100%; height:260px; font-family: ui-monospace, Consolas, monospace }
+    .hint { font-size:12px; color:#475569 }
+    .tag { background:#e2e8f0; border-radius:6px; padding:2px 6px; font-size:12px; margin-left:6px }
+    .status { position: fixed; left: 12px; bottom: 12px; font:12px/1.4 system-ui; color:#0f172a; background: #ffffffcc; padding:6px 8px; border-radius:8px; border:1px solid #e2e8f0 }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="fallback" class="fallback" style="display:none">지도를 불러오는 중 문제가 발생했습니다. 네트워크가 연결되어 있고 외부 스크립트가 차단되지 않았는지 확인해주세요.</div>
+
+  <div class="status" id="status">프리셋: 내장 사용</div>
+
+  <button class="chatbot-toggle" id="toggleChat">챗봇 열기</button>
+  <div class="chatbot-container" id="chatbot">
+    <div class="chatbot-header">
+      <span>어촌 대화형 챗봇</span><span id="villageTag" class="tag" style="display:none"></span>
+      <span class="spacer"></span>
+      <button id="btnSave" title="저장">💾</button>
+      <button id="btnClose" title="닫기">✕</button>
+    </div>
+    <div class="chatbot-body">
+      <div class="chatlog" id="chatLog" role="log" aria-live="polite"></div>
+      <div class="hint">메뉴: 1) 수산물 주문  2) 먹거리 안내  3) 카페 추천  4) 체험 예약  5) 편의시설 안내  6) 예약/주문 확인</div>
+    </div>
+    <div class="chatbot-footer">
+      <input id="chatInput" placeholder="메시지를 입력하세요 (Enter 전송)" />
+      <button id="chatSend">전송</button>
+    </div>
+  </div>
+
+  <!-- 요약 미리보기 모달 -->
+  <dialog id="summaryDialog">
+    <div class="modal-head">대화 요약 미리보기</div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:#334155">아래 내용이 맞는지 확인하세요. “TXT 저장”을 누르면 파일로 내려받습니다.</p>
+      <textarea id="summaryText" class="mono"></textarea>
+    </div>
+    <div class="modal-foot">
+      <button id="btnSaveTxt" class="btn-outline">TXT 저장</button>
+      <button id="btnCloseSummary">닫기</button>
+    </div>
+  </dialog>
+
+  <!-- 오프라인 내장 프리셋(JSON) -->
+  <script type="application/json" id="preset-data">
+  {
+    "version": "2025-08",
+    "defaults": {
+      "options": {
+        "species": ["고등어","광어","갈치","오징어","새우","대하","문어","전복","참돔","우럭"],
+        "forms":   ["냉동","냉장","필렛","라운드"]
+      },
+      "scenario": {
+        "1": ["<어종선택>","<상태선택>","몇 팩(kg) 필요하신가요?","배송은 어떻게 해드릴까요? 예: 익일 택배, 현장 수령","결제는 어떻게 하시겠습니까? 예: 카드, 계좌이체"],
+        "2": ["어떤 종류의 음식을 찾으시나요? 예: 해물탕, 생선구이, 간단한 분식","드시고 싶은 분위기는 어떤가요? 예: 가족 식당, 바닷가 전망 식당, 저녁 운영 식당"],
+        "3": ["어떤 분위기의 카페를 원하시나요? 예: 오션뷰, 조용한, 디저트 전문"],
+        "4": ["어떤 체험을 원하시나요? 예: 낚시, 조개잡이, 어촌민속체험","체험 희망 날짜와 시간은 언제인가요? (예: 2025-08-15 15:00)"],
+        "5": ["어떤 편의시설이 필요하신가요? 예: 주차장, 화장실, 샤워실, ATM"],
+        "6": ["예약자 이름 또는 전화번호 뒷자리를 입력해 주세요."]
+      },
+      "messages": {
+        "welcome": "{village}에 오신 것을 환영합니다. 무엇을 도와드릴까요?",
+        "menu": "메뉴에서 선택해 주세요: 1) 수산물 주문  2) 먹거리 안내  3) 카페 추천  4) 체험 예약  5) 편의시설 안내  6) 예약/주문 확인",
+        "ask_more": "더 필요한 것이 있나요? (예/아니오)",
+        "goodbye": "이용해 주셔서 감사합니다. 좋은 하루 되세요."
+      }
+    },
+    "villages": {
+      "FV_ULSAN": {
+        "meta": {"displayName": "울산항 어촌계", "contact": "052-000-0000"},
+        "options": { "species": ["오징어","대하","문어","가자미","전어"], "forms": ["냉장","냉동","필렛","라운드"] },
+        "scenario": { "1": ["<어종선택> (울산권)","<상태선택>","필요 수량(kg/팩)?","수령: 익일 택배/현장 (울산항 수령 가능)","결제: 카드/이체/현장결제"] },
+        "messages": { "welcome": "{village} 방문을 환영합니다. 오늘의 특산: 오징어/대하" }
+      },
+      "FV_TONGYEONG": {
+        "meta": {"displayName": "통영항 어촌계"},
+        "options": { "species": ["멸치","굴","도다리","전복","참돔"] }
+      },
+      "FV_GEOJE": {
+        "meta": {"displayName": "거제도 어촌계"},
+        "options": { "species": ["광어","우럭","참돔","전복"] }
+      }
+    }
+  }
+  </script>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    (function(){
+      const statusEl = document.getElementById('status');
+
+      // ===== Utility: deep merge =====
+      function deepMerge(base, override){
+        if (Array.isArray(base) && Array.isArray(override)) return override.slice();
+        if (base && typeof base==='object' && override && typeof override==='object'){
+          const out = {...base};
+          for(const k of Object.keys(override)){
+            out[k] = (k in base) ? deepMerge(base[k], override[k]) : override[k];
+          }
+          return out;
+        }
+        return (override!==undefined ? override : base);
+      }
+
+      // ===== Presets: load (server → fallback to embedded) =====
+      async function fetchWithTimeout(url, ms=3000){
+        return await Promise.race([
+          fetch(url, {cache:'no-store'}),
+          new Promise((_,rej)=> setTimeout(()=> rej(new Error('timeout')), ms))
+        ]);
+      }
+      function loadEmbeddedPresets(){
+        try{
+          const raw = document.getElementById('preset-data')?.textContent || '{}';
+          return JSON.parse(raw);
+        }catch(e){
+          console.warn('Embedded preset JSON parse error', e);
+          return {};
+        }
+      }
+      async function loadPresetsHybrid(){
+        // 1) Try server file (same directory presets.json)
+        try{
+          const res = await fetchWithTimeout('presets.json', 3000);
+          if(res.ok){
+            const data = await res.json();
+            statusEl.textContent = '프리셋: 서버에서 불러옴';
+            return data;
+          }
+        }catch(e){
+          // ignore and fallback
+        }
+        statusEl.textContent = '프리셋: 내장 사용(오프라인 모드)';
+        return loadEmbeddedPresets();
+      }
+
+      // Globals
+      let PRESETS = null;
+      let OPTIONS = { species:[], forms:[] };
+      let SCENARIO = {};
+      let MSG = {};
+
+      function applyDefaults(){
+        OPTIONS = PRESETS?.defaults?.options || {species:[], forms:[]};
+        SCENARIO = PRESETS?.defaults?.scenario || {};
+        MSG = PRESETS?.defaults?.messages || {};
+      }
+      function applyVillagePreset(villageId){
+        const v = PRESETS?.villages?.[villageId] || {};
+        OPTIONS = deepMerge(PRESETS?.defaults?.options||{}, v.options||{});
+        SCENARIO = deepMerge(PRESETS?.defaults?.scenario||{}, v.scenario||{});
+        MSG = deepMerge(PRESETS?.defaults?.messages||{}, v.messages||{});
+      }
+
+      function renderQuestion(flowId, step){
+        const q = SCENARIO[flowId]?.[step];
+        if (!q) return '';
+        if (q === '<어종선택>' || q.startsWith('<어종선택')){
+          return "어떤 수산물을 원하시나요? 번호/텍스트 선택\n" + OPTIONS.species.map((s,i)=>`  ${i+1}. ${s}`).join("\n");
+        }
+        if (q === '<상태선택>'){
+          return "어떤 상태를 원하시나요? 번호/텍스트 선택\n" + OPTIONS.forms.map((s,i)=>`  ${i+1}. ${s}`).join("\n");
+        }
+        return q;
+      }
+      function mapAnswer(flowId, step, txt){
+        const num = parseInt(txt,10);
+        const q = SCENARIO[flowId]?.[step];
+        if (q && q.startsWith('<어종선택')){
+          if(!isNaN(num) && num>=1 && num<=OPTIONS.species.length) return OPTIONS.species[num-1];
+          const hit = OPTIONS.species.find(s=> s.includes(txt)); return hit || txt;
+        }
+        if (q === '<상태선택>'){
+          if(!isNaN(num) && num>=1 && num<=OPTIONS.forms.length) return OPTIONS.forms[num-1];
+          const hit = OPTIONS.forms.find(s=> s.includes(txt)); return hit || txt;
+        }
+        return txt;
+      }
+
+      // ===== Map init =====
+      if (typeof L === 'undefined') {
+        document.getElementById('fallback').style.display = 'flex';
+        return;
+      }
+      const map = L.map('map').setView([35.5, 129.0], 7);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(map);
+
+      const LOCS = [
+        { id: "FV_BUSAN",   name: "부산 감천항", lat: 35.072, lng: 129.012 },
+        { id: "FV_JEJU",    name: "제주도",     lat: 33.500, lng: 126.500 },
+        { id: "FV_TONGYEONG", name: "통영항",   lat: 34.850, lng: 128.430 },
+        { id: "FV_GEOJE",   name: "거제도",     lat: 34.880, lng: 128.630 },
+        { id: "FV_ULSAN",   name: "울산항",     lat: 35.500, lng: 129.400 },
+        { id: "FV_YEOUIDO", name: "서울 여의도", lat: 37.521, lng: 126.924 }
+      ];
+      LOCS.forEach(loc => {
+        const marker = L.marker([loc.lat, loc.lng]).addTo(map).bindPopup(`${loc.name}<br/><button data-id="${loc.id}" class="popup-open">챗봇 열기</button>`);
+        marker.on('popupopen', () => {
+          setTimeout(() => {
+            document.querySelectorAll('.popup-open').forEach(btn => {
+              btn.onclick = () => openChat(loc);
+            });
+          });
+        });
+      });
+
+      // ===== Chatbot state =====
+      const logEl = document.getElementById('chatLog');
+      const input = document.getElementById('chatInput');
+      window.chatHistory = []; // {role, content, ts}
+      const state = {
+        village: null,
+        phase: 'menu',       // 'menu' | 'flow' | 'ask_more' | 'end'
+        current: null,       // '1'..'6'
+        step: 0,             // 질문 인덱스
+        answers: {}          // {stepIndex: answerText}
+      };
+      function appendChat(role, message){
+        const p = document.createElement('p');
+        p.textContent = (role === 'bot' ? '🤖 ' : '👤 ') + message;
+        logEl.appendChild(p);
+        logEl.scrollTop = logEl.scrollHeight;
+        window.chatHistory.push({role, content: message, ts: Date.now()});
+      }
+      function fmtWelcome(villageName){
+        const tpl = MSG?.welcome || '{village}에 오신 것을 환영합니다. 무엇을 도와드릴까요?';
+        return tpl.replace('{village}', villageName);
+      }
+      function showMenu(){
+        state.phase = 'menu';
+        state.current = null; state.step = 0; state.answers = {};
+        appendChat('bot', MSG?.menu || '메뉴에서 선택해 주세요: 1) 수산물 주문  2) 먹거리 안내  3) 카페 추천  4) 체험 예약  5) 편의시설 안내  6) 예약/주문 확인');
+      }
+      function beginFlow(id){
+        state.phase = 'flow'; state.current = id; state.step = 0; state.answers = {};
+        appendChat('bot', renderQuestion(id, 0));
+      }
+      function handleAnswer(txt){
+        const mapped = mapAnswer(state.current, state.step, txt);
+        state.answers[state.step] = mapped;
+        state.step++;
+        const qs = SCENARIO[state.current] || [];
+        if(state.step < qs.length){
+          appendChat('bot', renderQuestion(state.current, state.step));
+        } else {
+          const title = flowTitle(state.current);
+          appendChat('bot', `✅ ${title} 요약\n${makeFlowSummary(state.current, state.answers)}`);
+          appendChat('bot', MSG?.ask_more || '더 필요한 것이 있나요? (예/아니오)');
+          state.phase = 'ask_more';
+        }
+      }
+      function flowTitle(id){
+        return {"1":"수산물 주문","2":"먹거리 안내","3":"카페 추천","4":"체험 예약","5":"편의시설 안내","6":"예약/주문 확인"}[id] || id;
+      }
+      function makeFlowSummary(id, answers){
+        const qs = SCENARIO[id] || [];
+        let lines = [];
+        for(let i=0;i<qs.length;i++){
+          const label = ['<어종선택>','<상태선택>'].includes(qs[i]) ? (qs[i]==='<어종선택>'?'어종 선택':'상태 선택') : (qs[i].split('\n')[0]);
+          lines.push(`- ${label} → ${answers[i]||''}`);
+        }
+        return lines.join('\n');
+      }
+
+      // UI bindings
+      document.getElementById('toggleChat').onclick = () => {
+        const box = document.getElementById('chatbot');
+        box.style.display = (box.style.display === 'flex') ? 'none' : 'flex';
+        if (box.style.display === 'flex' && !state.village){
+          state.village = 'GENERIC';
+          document.getElementById('villageTag').textContent = state.village;
+          document.getElementById('villageTag').style.display = 'inline-block';
+          appendChat('bot', fmtWelcome(state.village));
+          showMenu();
+        }
+      };
+      document.getElementById('btnClose').onclick = () => document.getElementById('chatbot').style.display = 'none';
+      document.getElementById('chatSend').onclick = () => onUserSend();
+      input.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); onUserSend(); } });
+      function onUserSend(){
+        const txt = input.value.trim(); if(!txt) return;
+        appendChat('user', txt); input.value = '';
+        if(state.phase === 'menu'){
+          const id = txt.replace(/[^\d]/g,'');
+          if(SCENARIO[id]) beginFlow(id); else appendChat('bot', '1~6 중 번호를 입력해 주세요.');
+          return;
+        }
+        if(state.phase === 'flow'){ handleAnswer(txt); return; }
+        if(state.phase === 'ask_more'){
+          if(/^예|^yes/i.test(txt)){ showMenu(); }
+          else if(/^아니오|^no/i.test(txt)){ appendChat('bot', MSG?.goodbye || '이용해 주셔서 감사합니다. 좋은 하루 되세요.'); state.phase='end'; }
+          else appendChat('bot','예/아니오 중에 선택해 주세요.');
+          return;
+        }
+        if(state.phase === 'end'){
+          appendChat('bot','대화가 종료되었습니다. 새 대화를 시작하려면 “챗봇 열기”를 다시 눌러주세요.');
+          return;
+        }
+      }
+
+      function openChat(loc){
+        const box = document.getElementById('chatbot');
+        box.style.display = 'flex';
+        state.village = loc.name;
+        document.getElementById('villageTag').textContent = state.village;
+        document.getElementById('villageTag').style.display = 'inline-block';
+        logEl.innerHTML = '';
+
+        // Village-specific presets
+        applyVillagePreset(loc.id);
+
+        appendChat('bot', fmtWelcome(state.village));
+        showMenu();
+      }
+
+      // ===== Save (preview → TXT) =====
+      function buildFileName(ext){
+        const d = new Date(), pad = n => String(n).padStart(2,'0');
+        const ts = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+        const village = (state.village || 'GENERIC').replace(/\s+/g,'_');
+        return `chat_${village}_${ts}.${ext}`;
+      }
+      function buildSummaryText(){
+        const fmt = (ts)=>{ const d = new Date(ts), p = n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+        return window.chatHistory.map(entry=>{
+          const role = entry.role === 'bot' ? '🤖 Bot' : '👤 User';
+          return `${role} [${fmt(entry.ts)}]: ${String(entry.content).replace(/\n+/g,' ')}`;
+        }).join('\n');
+      }
+      function downloadTxt(filename, content){
+        const BOM = new Uint8Array([0xEF,0xBB,0xBF]);
+        const blob = new Blob([BOM, content], {type:'text/plain;charset=utf-8'});
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click(); URL.revokeObjectURL(a.href);
+      }
+      function openSummaryDialog(){
+        const dlg = document.getElementById('summaryDialog');
+        const area = document.getElementById('summaryText');
+        area.value = buildSummaryText(); dlg.showModal();
+        document.getElementById('btnSaveTxt').onclick = ()=>{ if(confirm('이 내용으로 TXT 파일을 저장할까요?')){ downloadTxt(buildFileName('txt'), area.value); dlg.close(); } };
+        document.getElementById('btnCloseSummary').onclick = ()=> dlg.close();
+      }
+      document.getElementById('btnSave').onclick = openSummaryDialog;
+      window.addEventListener('keydown', (e)=>{ if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){ e.preventDefault(); openSummaryDialog(); }});
+
+      // ===== Boot: load presets then apply defaults =====
+      (async function init(){
+        PRESETS = await loadPresetsHybrid();
+        applyDefaults();
+      })();
+    })();
+  </script>
+</body>
+</html>
