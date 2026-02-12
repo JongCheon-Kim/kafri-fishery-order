@@ -4,47 +4,162 @@
   <meta charset="utf-8" />
   <title>어촌 AI 지도챗봇 – 하이브리드 프리셋(오프라인 내장 + 서버 불러오기)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <!-- no SRI/crossorigin for file:// testing -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
   <style>
+    /* ===== Base ===== */
     html, body, #map { height: 100%; margin: 0; }
+    body { overflow-x: hidden; }
     .fallback { position: fixed; inset: 0; display:flex; align-items:center; justify-content:center; font:16px/1.4 system-ui; color:#0f172a }
+
+    /* ===== Chatbot ===== */
     .chatbot-container {
-      position: fixed; bottom: 20px; right: 20px; width: 400px; height: 600px;
-      background:#fff; border:1px solid #cbd5e1; border-radius:12px; display:none; flex-direction:column;
-      box-shadow: 0 10px 30px rgba(0,0,0,.15); z-index:1000; overflow:hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 400px;
+      height: 600px;
+      background:#fff;
+      border:1px solid #cbd5e1;
+      border-radius:12px;
+      display:none;
+      flex-direction:column;
+      box-shadow: 0 10px 30px rgba(0,0,0,.15);
+      z-index:1000;
+      overflow:hidden;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     }
     .chatbot-header { background:#2563eb; color:#fff; padding:10px 14px; display:flex; align-items:center; gap:8px; font-weight:700 }
     .chatbot-header .spacer { flex:1 }
-    .chatbot-header button { background: transparent; border:0; color:#fff; cursor:pointer }
-    .chatbot-body { padding: 10px 10px; display:flex; flex-direction:column; gap:10px; height: calc(100% - 108px) }
-    .chatlog { flex:1; border:1px solid #e2e8f0; border-radius: 8px; padding: 8px; overflow:auto; background:#f8fafc }
+    .chatbot-header button { background: transparent; border:0; color:#fff; cursor:pointer; font-size:16px; line-height:1 }
+
+    .chatbot-body {
+      padding: 10px 10px;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      height: calc(100% - 108px);
+      min-height: 0; /* 중요: flex 내부 스크롤 정상화 */
+    }
+    .chatlog {
+      flex:1;
+      border:1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 8px;
+      overflow:auto;
+      background:#f8fafc;
+      min-height: 0; /* 중요 */
+    }
     .chatlog p { margin: 6px 0; white-space: pre-wrap; }
+
     .chatbot-footer { display:flex; gap:6px; padding:8px 10px }
     .chatbot-footer input { flex:1; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px }
     .chatbot-footer button { padding:10px 12px; border:0; border-radius:8px; background:#2563eb; color:#fff; cursor:pointer; font-weight:700 }
+
     .chatbot-toggle {
-      position: fixed; bottom: 20px; right: 20px; z-index: 900;
-      background:#2563eb; color:#fff; border: none; padding: 10px 14px; border-radius: 10px; cursor: pointer; font-weight: 700;
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 900;
+      background:#2563eb;
+      color:#fff;
+      border: none;
+      padding: 10px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 700;
     }
-    dialog { border:0; border-radius:14px; width:min(720px,95vw); padding:0; overflow:hidden; }
+
+    /* ===== Modal(dialog) ===== */
+    dialog {
+      border:0;
+      border-radius:14px;
+      width:min(720px,95vw);
+      padding:0;
+      overflow:hidden;
+      max-height: 90vh; /* 모바일에서 잘림 방지 */
+    }
     dialog::backdrop { background: rgba(0,0,0,.35) }
     .modal-head { background:#2563eb; color:#fff; padding:12px 16px; font-weight:700 }
-    .modal-body { padding:12px 16px }
-    .modal-foot { display:flex; gap:8px; justify-content:flex-end; padding:12px 16px; border-top:1px solid #e2e8f0 }
-    textarea.mono { width:100%; height:260px; font-family: ui-monospace, Consolas, monospace }
+    .modal-body {
+      padding:12px 16px;
+      overflow:auto;          /* 중요: 모바일에서 내용 스크롤 */
+      max-height: calc(90vh - 120px);
+    }
+    .modal-foot {
+      display:flex;
+      gap:8px;
+      justify-content:flex-end;
+      padding:12px 16px;
+      border-top:1px solid #e2e8f0
+    }
+    textarea.mono {
+      width:100%;
+      height: 40vh;           /* 고정 260px 대신 뷰포트 기준 */
+      min-height: 220px;
+      max-height: 55vh;
+      font-family: ui-monospace, Consolas, monospace
+    }
+
     .hint { font-size:12px; color:#475569 }
     .tag { background:#e2e8f0; border-radius:6px; padding:2px 6px; font-size:12px; margin-left:6px }
-    .status { position: fixed; left: 12px; bottom: 12px; font:12px/1.4 system-ui; color:#0f172a; background: #ffffffcc; padding:6px 8px; border-radius:8px; border:1px solid #e2e8f0 }
+
+    .status {
+      position: fixed;
+      left: 12px;
+      bottom: 12px;
+      font:12px/1.4 system-ui;
+      color:#0f172a;
+      background: #ffffffcc;
+      padding:6px 8px;
+      border-radius:8px;
+      border:1px solid #e2e8f0;
+      z-index: 850;
+    }
+
+    /* ===== Mobile Responsive ===== */
+    @media (max-width: 768px) {
+      /* 버튼이 화면 밖으로 밀리지 않게 */
+      .chatbot-toggle {
+        bottom: 12px;
+        right: 12px;
+        border-radius: 12px;
+      }
+
+      /* 챗봇을 "풀스크린 모달"로 */
+      .chatbot-container {
+        left: 0;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        width: 100vw;
+        height: 100vh;
+        border-radius: 0;
+        border-left: 0;
+        border-right: 0;
+        border-bottom: 0;
+      }
+
+      /* iOS safe-area 대응 */
+      .chatbot-header { padding-top: calc(10px + env(safe-area-inset-top)); }
+      .chatbot-footer { padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
+
+      /* 상태 박스가 버튼과 겹치지 않게 */
+      .status { bottom: 64px; }
+    }
   </style>
 </head>
+
 <body>
   <div id="map"></div>
-  <div id="fallback" class="fallback" style="display:none">지도를 불러오는 중 문제가 발생했습니다. 네트워크가 연결되어 있고 외부 스크립트가 차단되지 않았는지 확인해주세요.</div>
+  <div id="fallback" class="fallback" style="display:none">
+    지도를 불러오는 중 문제가 발생했습니다. 네트워크가 연결되어 있고 외부 스크립트가 차단되지 않았는지 확인해주세요.
+  </div>
 
   <div class="status" id="status">프리셋: 내장 사용</div>
 
   <button class="chatbot-toggle" id="toggleChat">챗봇 열기</button>
+
   <div class="chatbot-container" id="chatbot">
     <div class="chatbot-header">
       <span>어촌 대화형 챗봇</span><span id="villageTag" class="tag" style="display:none"></span>
@@ -68,6 +183,7 @@
     <div class="modal-body">
       <p style="font-size:13px;color:#334155">아래 내용이 맞는지 확인하세요. “TXT 저장”을 누르면 파일로 내려받습니다.</p>
       <textarea id="summaryText" class="mono"></textarea>
+      <div class="hint" style="margin-top:8px;">모바일에서는 내용이 길면 스크롤됩니다.</div>
     </div>
     <div class="modal-foot">
       <button id="btnSaveTxt" class="btn-outline">TXT 저장</button>
@@ -106,14 +222,8 @@
         "scenario": { "1": ["<어종선택> (울산권)","<상태선택>","필요 수량(kg/팩)?","수령: 익일 택배/현장 (울산항 수령 가능)","결제: 카드/이체/현장결제"] },
         "messages": { "welcome": "{village} 방문을 환영합니다. 오늘의 특산: 오징어/대하" }
       },
-      "FV_TONGYEONG": {
-        "meta": {"displayName": "통영항 어촌계"},
-        "options": { "species": ["멸치","굴","도다리","전복","참돔"] }
-      },
-      "FV_GEOJE": {
-        "meta": {"displayName": "거제도 어촌계"},
-        "options": { "species": ["광어","우럭","참돔","전복"] }
-      }
+      "FV_TONGYEONG": { "meta": {"displayName": "통영항 어촌계"}, "options": { "species": ["멸치","굴","도다리","전복","참돔"] } },
+      "FV_GEOJE":     { "meta": {"displayName": "거제도 어촌계"}, "options": { "species": ["광어","우럭","참돔","전복"] } }
     }
   }
   </script>
@@ -123,7 +233,6 @@
     (function(){
       const statusEl = document.getElementById('status');
 
-      // ===== Utility: deep merge =====
       function deepMerge(base, override){
         if (Array.isArray(base) && Array.isArray(override)) return override.slice();
         if (base && typeof base==='object' && override && typeof override==='object'){
@@ -136,13 +245,13 @@
         return (override!==undefined ? override : base);
       }
 
-      // ===== Presets: load (server → fallback to embedded) =====
       async function fetchWithTimeout(url, ms=3000){
         return await Promise.race([
           fetch(url, {cache:'no-store'}),
           new Promise((_,rej)=> setTimeout(()=> rej(new Error('timeout')), ms))
         ]);
       }
+
       function loadEmbeddedPresets(){
         try{
           const raw = document.getElementById('preset-data')?.textContent || '{}';
@@ -152,8 +261,8 @@
           return {};
         }
       }
+
       async function loadPresetsHybrid(){
-        // 1) Try server file (same directory presets.json)
         try{
           const res = await fetchWithTimeout('presets.json', 3000);
           if(res.ok){
@@ -161,14 +270,11 @@
             statusEl.textContent = '프리셋: 서버에서 불러옴';
             return data;
           }
-        }catch(e){
-          // ignore and fallback
-        }
+        }catch(e){}
         statusEl.textContent = '프리셋: 내장 사용(오프라인 모드)';
         return loadEmbeddedPresets();
       }
 
-      // Globals
       let PRESETS = null;
       let OPTIONS = { species:[], forms:[] };
       let SCENARIO = {};
@@ -179,6 +285,7 @@
         SCENARIO = PRESETS?.defaults?.scenario || {};
         MSG = PRESETS?.defaults?.messages || {};
       }
+
       function applyVillagePreset(villageId){
         const v = PRESETS?.villages?.[villageId] || {};
         OPTIONS = deepMerge(PRESETS?.defaults?.options||{}, v.options||{});
@@ -197,6 +304,7 @@
         }
         return q;
       }
+
       function mapAnswer(flowId, step, txt){
         const num = parseInt(txt,10);
         const q = SCENARIO[flowId]?.[step];
@@ -211,11 +319,11 @@
         return txt;
       }
 
-      // ===== Map init =====
       if (typeof L === 'undefined') {
         document.getElementById('fallback').style.display = 'flex';
         return;
       }
+
       const map = L.map('map').setView([35.5, 129.0], 7);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 18,
@@ -230,8 +338,13 @@
         { id: "FV_ULSAN",   name: "울산항",     lat: 35.500, lng: 129.400 },
         { id: "FV_YEOUIDO", name: "서울 여의도", lat: 37.521, lng: 126.924 }
       ];
+
       LOCS.forEach(loc => {
-        const marker = L.marker([loc.lat, loc.lng]).addTo(map).bindPopup(`${loc.name}<br/><button data-id="${loc.id}" class="popup-open">챗봇 열기</button>`);
+        const marker = L.marker([loc.lat, loc.lng]).addTo(map).bindPopup(
+          `${loc.name}<br/><button data-id="${loc.id}" class="popup-open" style="padding:8px 10px;border:0;border-radius:8px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;">챗봇 열기</button>`,
+          { maxWidth: 240 }
+        );
+
         marker.on('popupopen', () => {
           setTimeout(() => {
             document.querySelectorAll('.popup-open').forEach(btn => {
@@ -241,17 +354,18 @@
         });
       });
 
-      // ===== Chatbot state =====
       const logEl = document.getElementById('chatLog');
       const input = document.getElementById('chatInput');
-      window.chatHistory = []; // {role, content, ts}
+      window.chatHistory = [];
+
       const state = {
         village: null,
-        phase: 'menu',       // 'menu' | 'flow' | 'ask_more' | 'end'
-        current: null,       // '1'..'6'
-        step: 0,             // 질문 인덱스
-        answers: {}          // {stepIndex: answerText}
+        phase: 'menu',
+        current: null,
+        step: 0,
+        answers: {}
       };
+
       function appendChat(role, message){
         const p = document.createElement('p');
         p.textContent = (role === 'bot' ? '🤖 ' : '👤 ') + message;
@@ -259,19 +373,37 @@
         logEl.scrollTop = logEl.scrollHeight;
         window.chatHistory.push({role, content: message, ts: Date.now()});
       }
+
       function fmtWelcome(villageName){
         const tpl = MSG?.welcome || '{village}에 오신 것을 환영합니다. 무엇을 도와드릴까요?';
         return tpl.replace('{village}', villageName);
       }
+
       function showMenu(){
         state.phase = 'menu';
         state.current = null; state.step = 0; state.answers = {};
         appendChat('bot', MSG?.menu || '메뉴에서 선택해 주세요: 1) 수산물 주문  2) 먹거리 안내  3) 카페 추천  4) 체험 예약  5) 편의시설 안내  6) 예약/주문 확인');
       }
+
       function beginFlow(id){
         state.phase = 'flow'; state.current = id; state.step = 0; state.answers = {};
         appendChat('bot', renderQuestion(id, 0));
       }
+
+      function flowTitle(id){
+        return {"1":"수산물 주문","2":"먹거리 안내","3":"카페 추천","4":"체험 예약","5":"편의시설 안내","6":"예약/주문 확인"}[id] || id;
+      }
+
+      function makeFlowSummary(id, answers){
+        const qs = SCENARIO[id] || [];
+        let lines = [];
+        for(let i=0;i<qs.length;i++){
+          const label = ['<어종선택>','<상태선택>'].includes(qs[i]) ? (qs[i]==='<어종선택>'?'어종 선택':'상태 선택') : (qs[i].split('\n')[0]);
+          lines.push(`- ${label} → ${answers[i]||''}`);
+        }
+        return lines.join('\n');
+      }
+
       function handleAnswer(txt){
         const mapped = mapAnswer(state.current, state.step, txt);
         state.answers[state.step] = mapped;
@@ -286,20 +418,7 @@
           state.phase = 'ask_more';
         }
       }
-      function flowTitle(id){
-        return {"1":"수산물 주문","2":"먹거리 안내","3":"카페 추천","4":"체험 예약","5":"편의시설 안내","6":"예약/주문 확인"}[id] || id;
-      }
-      function makeFlowSummary(id, answers){
-        const qs = SCENARIO[id] || [];
-        let lines = [];
-        for(let i=0;i<qs.length;i++){
-          const label = ['<어종선택>','<상태선택>'].includes(qs[i]) ? (qs[i]==='<어종선택>'?'어종 선택':'상태 선택') : (qs[i].split('\n')[0]);
-          lines.push(`- ${label} → ${answers[i]||''}`);
-        }
-        return lines.join('\n');
-      }
 
-      // UI bindings
       document.getElementById('toggleChat').onclick = () => {
         const box = document.getElementById('chatbot');
         box.style.display = (box.style.display === 'flex') ? 'none' : 'flex';
@@ -311,9 +430,11 @@
           showMenu();
         }
       };
+
       document.getElementById('btnClose').onclick = () => document.getElementById('chatbot').style.display = 'none';
       document.getElementById('chatSend').onclick = () => onUserSend();
       input.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); onUserSend(); } });
+
       function onUserSend(){
         const txt = input.value.trim(); if(!txt) return;
         appendChat('user', txt); input.value = '';
@@ -343,20 +464,19 @@
         document.getElementById('villageTag').style.display = 'inline-block';
         logEl.innerHTML = '';
 
-        // Village-specific presets
         applyVillagePreset(loc.id);
 
         appendChat('bot', fmtWelcome(state.village));
         showMenu();
       }
 
-      // ===== Save (preview → TXT) =====
       function buildFileName(ext){
         const d = new Date(), pad = n => String(n).padStart(2,'0');
         const ts = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
         const village = (state.village || 'GENERIC').replace(/\s+/g,'_');
         return `chat_${village}_${ts}.${ext}`;
       }
+
       function buildSummaryText(){
         const fmt = (ts)=>{ const d = new Date(ts), p = n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
         return window.chatHistory.map(entry=>{
@@ -364,22 +484,36 @@
           return `${role} [${fmt(entry.ts)}]: ${String(entry.content).replace(/\n+/g,' ')}`;
         }).join('\n');
       }
+
       function downloadTxt(filename, content){
         const BOM = new Uint8Array([0xEF,0xBB,0xBF]);
         const blob = new Blob([BOM, content], {type:'text/plain;charset=utf-8'});
         const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click(); URL.revokeObjectURL(a.href);
       }
+
       function openSummaryDialog(){
         const dlg = document.getElementById('summaryDialog');
         const area = document.getElementById('summaryText');
-        area.value = buildSummaryText(); dlg.showModal();
-        document.getElementById('btnSaveTxt').onclick = ()=>{ if(confirm('이 내용으로 TXT 파일을 저장할까요?')){ downloadTxt(buildFileName('txt'), area.value); dlg.close(); } };
+        area.value = buildSummaryText();
+        dlg.showModal();
+
+        document.getElementById('btnSaveTxt').onclick = ()=>{
+          if(confirm('이 내용으로 TXT 파일을 저장할까요?')){
+            downloadTxt(buildFileName('txt'), area.value);
+            dlg.close();
+          }
+        };
         document.getElementById('btnCloseSummary').onclick = ()=> dlg.close();
       }
-      document.getElementById('btnSave').onclick = openSummaryDialog;
-      window.addEventListener('keydown', (e)=>{ if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){ e.preventDefault(); openSummaryDialog(); }});
 
-      // ===== Boot: load presets then apply defaults =====
+      document.getElementById('btnSave').onclick = openSummaryDialog;
+      window.addEventListener('keydown', (e)=>{
+        if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){
+          e.preventDefault();
+          openSummaryDialog();
+        }
+      });
+
       (async function init(){
         PRESETS = await loadPresetsHybrid();
         applyDefaults();
