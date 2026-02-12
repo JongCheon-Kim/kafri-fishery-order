@@ -37,51 +37,44 @@
     .tag { background:#e2e8f0; border-radius:6px; padding:2px 6px; font-size:12px; margin-left:6px }
     .status { position: fixed; left: 12px; bottom: 12px; font:12px/1.4 system-ui; color:#0f172a; background: #ffffffcc; padding:6px 8px; border-radius:8px; border:1px solid #e2e8f0 }
 
-    /* ====== [ADD ONLY] 모바일 전체화면 + 입력창 잘림 방지 (CSS만 추가) ====== */
-    @media (max-width: 768px) {
-      .chatbot-container {
-        top: 0 !important;
-        left: 0 !important;
-        right: 0 !important;
-        bottom: 0 !important;
+   /* ====== 모바일: 지도 위 하단 팝업형 ====== */
+@media (max-width: 768px) {
 
-        width: 100vw !important;
-        height: 100dvh !important;
-        min-height: 100dvh !important;
+  .chatbot-container {
+    position: fixed !important;
 
-        border-radius: 0 !important;
-        z-index: 99999 !important;
+    top: auto !important;     /* ← 전체화면 덮기 제거 */
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
 
-        display: flex !important;
-        flex-direction: column !important;
-      }
+    width: 100vw !important;
+    height: 88vh !important;  /* 지도 보이게 85~90vh 권장 */
+    max-height: 88vh !important;
 
-      /* iOS Safari fallback */
-      .chatbot-container {
-        height: -webkit-fill-available !important;
-        min-height: -webkit-fill-available !important;
-      }
+    border-radius: 16px 16px 0 0 !important;
+    z-index: 1000 !important; /* 지도 위에만 */
+  }
 
-      /* body height(calc) 무력화: flex로 자연 확장 */
-      .chatbot-body {
-        flex: 1 1 auto !important;
-        height: auto !important;
-        overflow: hidden !important;
-      }
+  /* calc 제거 → flex 자연 확장 */
+  .chatbot-body {
+    flex: 1 1 auto !important;
+    height: auto !important;
+  }
 
-      /* 대화영역만 스크롤 */
-      .chatlog {
-        flex: 1 1 auto !important;
-        overflow-y: auto !important;
-        -webkit-overflow-scrolling: touch !important;
-      }
+  /* 대화영역만 스크롤 */
+  .chatlog {
+    flex: 1 1 auto !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
 
-      /* 입력창 하단 잘림 방지 (safe-area) */
-      .chatbot-footer {
-        flex: 0 0 auto !important;
-        padding-bottom: env(safe-area-inset-bottom) !important;
-      }
-    }
+  /* 입력창 하단 안전영역 */
+  .chatbot-footer {
+    padding-bottom: env(safe-area-inset-bottom) !important;
+  }
+
+}
   </style>
 </head>
 <body>
